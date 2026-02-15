@@ -171,10 +171,15 @@ io.on('connection', (socket) => {
   // Player joins with name and team - replaces a bot
   socket.on('join', (data) => {
     const { name, team, difficulty } = data;
-    
-    // Update difficulty if provided
-    if (difficulty) {
+
+    // Only the FIRST real player can set difficulty
+    // After that, everyone uses the server's difficulty
+    const isFirstPlayer = realPlayers.size === 0;
+    if (isFirstPlayer && difficulty) {
       gameState.difficulty = difficulty;
+      console.log(`First player ${name} set difficulty to: ${difficulty}`);
+    } else {
+      console.log(`${name} joining with server difficulty: ${gameState.difficulty}`);
     }
     
     // Find a bot on the selected team to replace

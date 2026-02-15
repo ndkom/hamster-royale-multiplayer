@@ -1323,9 +1323,10 @@ function shoot() {
 
       if (intersects.length > 0) {
         const hit = intersects[0];
-        
-        // Check if hit an enemy
+
+        // Check if hit an enemy (skip enemies with null mesh)
         for (const enemy of enemies) {
+          if (!enemy || !enemy.mesh) continue;
           if (enemy.mesh === hit.object || enemy.mesh.children.includes(hit.object)) {
             // Only damage enemies from opposite team
             if (enemy.team !== playerState.team) {
@@ -1350,6 +1351,7 @@ function shoot() {
 
         // Check if hit a remote player (other human)
         for (const [playerId, remote] of remotePlayers) {
+          if (!remote || !remote.mesh) continue;
           // Check if hit object is part of remote player's mesh hierarchy
           let hitRemotePlayer = false;
           remote.mesh.traverse((child) => {
@@ -1380,6 +1382,7 @@ function shoot() {
 
         // Check if hit a wall
         for (const wall of buildSystem.getWalls()) {
+          if (!wall || !wall.mesh) continue;
           if (wall.mesh === hit.object) {
             buildSystem.damageWall(wall, shot.damage);
             break;

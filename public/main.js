@@ -403,6 +403,7 @@ function updateLeaderboardFromServer(data) {
     const teamColor = p.team === 'red' ? '#ff4444' : '#4444ff';
     const teamEmoji = p.team === 'red' ? '🔴' : '🔵';
     const kd = p.deaths > 0 ? (p.kills / p.deaths).toFixed(2) : p.kills.toFixed(2);
+    const playTime = formatPlayTime(p.playTime || 0);
     return `
       <tr style="border-bottom: 1px solid #333;">
         <td style="padding: 10px; text-align: left;">#${index + 1}</td>
@@ -411,9 +412,21 @@ function updateLeaderboardFromServer(data) {
         <td style="padding: 10px; text-align: center;">${p.kills}</td>
         <td style="padding: 10px; text-align: center;">${p.deaths}</td>
         <td style="padding: 10px; text-align: center; color: #00ffff;">${kd}</td>
+        <td style="padding: 10px; text-align: center; color: #ffaa00;">${playTime}</td>
       </tr>
     `;
   }).join('');
+}
+
+// Format seconds into mm:ss or hh:mm:ss
+function formatPlayTime(seconds) {
+  const hrs = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  if (hrs > 0) {
+    return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  }
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
 // ========== END MULTIPLAYER FUNCTIONS ==========

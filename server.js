@@ -110,7 +110,8 @@ io.on('connection', (socket) => {
       kills: 0,
       deaths: 0,
       skinType: Math.floor(Math.random() * 5),
-      isBot: false
+      isBot: false,
+      joinedAt: Date.now() // Track when player joined for session time
     });
     
     realPlayers.add(socket.id);
@@ -228,6 +229,7 @@ io.on('connection', (socket) => {
   
   // Request leaderboard
   socket.on('requestLeaderboard', () => {
+    const now = Date.now();
     const leaderboard = Array.from(players.values())
       .filter(p => !p.isBot) // Only real players
       .sort((a, b) => b.kills - a.kills)
@@ -235,9 +237,10 @@ io.on('connection', (socket) => {
         name: p.name,
         team: p.team,
         kills: p.kills,
-        deaths: p.deaths || 0
+        deaths: p.deaths || 0,
+        playTime: Math.floor((now - (p.joinedAt || now)) / 1000) // Seconds played
       }));
-    
+
     socket.emit('leaderboard', {
       players: leaderboard,
       teamScores: gameState.teamScores

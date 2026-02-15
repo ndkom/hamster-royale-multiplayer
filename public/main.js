@@ -7,8 +7,8 @@ import { BuildSystem } from './BuildSystem.js';
 import { generateEnvironment } from './Environment.js';
 import { CONFIG } from './config.js';
 
-// VERSION 5 - temporarily removed remote players from raycaster
-console.log('=== HAMSTER ROYALE v5 LOADED ===');
+// VERSION 6 - fixed raycaster.camera for sprites (name tags)
+console.log('=== HAMSTER ROYALE v6 LOADED ===');
 
 // Global game state
 let gameStarted = false;
@@ -1320,13 +1320,15 @@ function shoot() {
       let intersects = [];
       try {
         raycaster.set(camera.position, direction);
+        // Set camera for sprite raycasting (name tags are sprites)
+        raycaster.camera = camera;
 
-        // Check for hits - TEMPORARILY exclude remote players to debug
+        // Check for hits - include remote players
         const targets = enemies.map(e => e?.mesh).filter(m => m != null && m.parent != null);
-        // const remotePlayerMeshes = Array.from(remotePlayers.values()).map(r => r?.mesh).filter(m => m != null && m.parent != null);
+        const remotePlayerMeshes = Array.from(remotePlayers.values()).map(r => r?.mesh).filter(m => m != null && m.parent != null);
         const walls = buildSystem.getWalls().map(w => w?.mesh).filter(m => m != null && m.parent != null);
         const obstacleMeshes = obstacles.map(o => o?.mesh).filter(m => m != null && m.parent != null);
-        const allTargets = [...targets, ...walls, ...obstacleMeshes];
+        const allTargets = [...targets, ...remotePlayerMeshes, ...walls, ...obstacleMeshes];
 
         intersects = allTargets.length > 0 ? raycaster.intersectObjects(allTargets, true) : [];
       } catch (raycastError) {

@@ -1292,6 +1292,8 @@ function shoot() {
     }
   } else {
     // Ranged attack
+    console.log(`SHOOTING: ${shots.length} shots, camera at`, camera.position.x.toFixed(1), camera.position.y.toFixed(1), camera.position.z.toFixed(1));
+
     shots.forEach(shot => {
       const direction = new THREE.Vector3(0, 0, -1);
       direction.applyQuaternion(camera.quaternion);
@@ -1300,6 +1302,8 @@ function shoot() {
       direction.x += (Math.random() - 0.5) * shot.spread;
       direction.y += (Math.random() - 0.5) * shot.spread;
       direction.normalize();
+
+      console.log(`  Direction:`, direction.x.toFixed(2), direction.y.toFixed(2), direction.z.toFixed(2));
 
       // Send shot to network
       if (network && network.isConnected) {
@@ -1384,7 +1388,9 @@ function shoot() {
       }
 
       // Create visual projectile
+      console.log(`  Creating projectile with color:`, shot.color);
       createProjectile(camera.position.clone(), direction.clone(), shot.color, false);
+      console.log(`  Projectiles in scene: ${projectiles.length}`);
     });
   }
 

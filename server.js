@@ -382,7 +382,6 @@ io.on('connection', (socket) => {
           io.to(targetId).emit('healthUpdate', { health: target.health });
         }
       }
-    }
   });
   
   // Request leaderboard

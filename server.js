@@ -187,6 +187,7 @@ io.on('connection', (socket) => {
         io.emit('playerKilled', {
           killerId: socket.id,
           killerName: shooter.name,
+          killerKills: shooter.kills,
           victimId: targetId,
           victimName: target.name,
           teamScores: gameState.teamScores

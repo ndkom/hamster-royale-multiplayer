@@ -137,6 +137,85 @@ function showNotification(message) {
   }, 3000);
 }
 
+// ========== KILL MILESTONE SYSTEM ==========
+
+const KILL_MILESTONES = [
+  { kills: 10, title: 'KILLER', color: '#ffaa00' },
+  { kills: 25, title: 'SUPER KILLER', color: '#ff6600' },
+  { kills: 50, title: 'ULTRA KILLER', color: '#ff0066' },
+  { kills: 100, title: 'MEGA KILLER', color: '#ff00ff' },
+  { kills: 200, title: 'LEGENDARY', color: '#00ffff' },
+  { kills: 300, title: 'GODLIKE', color: '#00ff00' },
+  { kills: 500, title: 'UNSTOPPABLE', color: '#ffffff' }
+];
+
+// Check if kills hit a milestone
+function checkKillMilestone(playerName, kills) {
+  for (const milestone of KILL_MILESTONES) {
+    if (kills === milestone.kills) {
+      showMilestoneAnnouncement(playerName, milestone.title, milestone.kills, milestone.color);
+      return;
+    }
+  }
+}
+
+// Show BIG milestone announcement
+function showMilestoneAnnouncement(playerName, title, kills, color) {
+  const announcement = document.createElement('div');
+  announcement.style.cssText = `
+    position: fixed;
+    top: 15%;
+    left: 50%;
+    transform: translateX(-50%);
+    text-align: center;
+    z-index: 10001;
+    pointer-events: none;
+    animation: milestoneAnim 4s ease-out forwards;
+  `;
+
+  announcement.innerHTML = `
+    <div style="
+      font-family: 'Orbitron', sans-serif;
+      font-size: 72px;
+      font-weight: bold;
+      color: ${color};
+      text-shadow: 0 0 30px ${color}, 0 0 60px ${color}, 2px 2px 4px black;
+      letter-spacing: 5px;
+      animation: pulseGlow 0.5s ease-in-out infinite alternate;
+    ">${title}</div>
+    <div style="
+      font-family: 'Orbitron', sans-serif;
+      font-size: 36px;
+      color: white;
+      text-shadow: 0 0 20px ${color}, 2px 2px 4px black;
+      margin-top: 10px;
+    ">${playerName} - ${kills} KILLS!</div>
+  `;
+
+  // Add CSS animation
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes milestoneAnim {
+      0% { opacity: 0; transform: translateX(-50%) scale(0.5); }
+      10% { opacity: 1; transform: translateX(-50%) scale(1.2); }
+      20% { transform: translateX(-50%) scale(1); }
+      80% { opacity: 1; }
+      100% { opacity: 0; transform: translateX(-50%) translateY(-50px); }
+    }
+    @keyframes pulseGlow {
+      from { text-shadow: 0 0 30px ${color}, 0 0 60px ${color}, 2px 2px 4px black; }
+      to { text-shadow: 0 0 50px ${color}, 0 0 100px ${color}, 0 0 150px ${color}, 2px 2px 4px black; }
+    }
+  `;
+  document.head.appendChild(style);
+  document.body.appendChild(announcement);
+
+  setTimeout(() => {
+    announcement.remove();
+    style.remove();
+  }, 4000);
+}
+
 // ========== MULTIPLAYER FUNCTIONS ==========
 
 // Create a remote player's hamster model
@@ -238,6 +317,15 @@ function setupNetworkListeners() {
     showNotification(`${data.killerName} eliminated ${data.victimName}!`);
     teamScores.red = data.teamScores.red;
     teamScores.blue = data.teamScores.blue;
+
+    // Update our own kills if we're the killer
+    if (data.killerId === network.playerId) {
+      playerState.kills = data.killerKills;
+    }
+
+    // Check for kill milestones (shows big announcement)
+    checkKillMilestone(data.killerName, data.killerKills);
+
     updateUI();
   });
 
@@ -727,7 +815,8 @@ function shoot() {
                 enemy.destroy();
                 playerState.kills++;
                 teamScores.red++;
-                
+                checkKillMilestone(playerName || 'You', playerState.kills);
+
                 setTimeout(() => spawnEnemy(enemyTeam), 2000);
               }
             }
@@ -772,7 +861,8 @@ function shoot() {
                 enemy.destroy();
                 playerState.kills++;
                 teamScores.red++; // Player's team score
-                
+                checkKillMilestone(playerName || 'You', playerState.kills);
+
                 // Spawn new enemy for the killed team
                 setTimeout(() => spawnEnemy(enemyTeam), 2000);
               }

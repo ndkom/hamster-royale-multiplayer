@@ -170,36 +170,73 @@ function checkKillMilestone(playerName, kills) {
   }
 }
 
-// Show BIG milestone announcement
+// Play milestone achievement sound
+function playMilestoneSound() {
+  try {
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+    // Create a triumphant sound effect
+    const playTone = (freq, startTime, duration) => {
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      oscillator.type = 'sine';
+      oscillator.frequency.value = freq;
+
+      gainNode.gain.setValueAtTime(0.3, startTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
+
+      oscillator.start(startTime);
+      oscillator.stop(startTime + duration);
+    };
+
+    // Play ascending triumphant notes
+    const now = audioContext.currentTime;
+    playTone(523.25, now, 0.15);       // C5
+    playTone(659.25, now + 0.1, 0.15); // E5
+    playTone(783.99, now + 0.2, 0.15); // G5
+    playTone(1046.5, now + 0.3, 0.3);  // C6 (hold longer)
+  } catch (e) {
+    console.log('Audio not available');
+  }
+}
+
+// Show BIG milestone announcement (EVERYONE SEES THIS)
 function showMilestoneAnnouncement(playerName, title, kills, color) {
+  // Play milestone sound
+  playMilestoneSound();
+
   const announcement = document.createElement('div');
   announcement.style.cssText = `
     position: fixed;
-    top: 15%;
+    top: 10%;
     left: 50%;
     transform: translateX(-50%);
     text-align: center;
     z-index: 10001;
     pointer-events: none;
-    animation: milestoneAnim 4s ease-out forwards;
+    animation: milestoneAnim 5s ease-out forwards;
   `;
 
   announcement.innerHTML = `
     <div style="
       font-family: 'Orbitron', sans-serif;
-      font-size: 72px;
+      font-size: 80px;
       font-weight: bold;
       color: ${color};
       text-shadow: 0 0 30px ${color}, 0 0 60px ${color}, 2px 2px 4px black;
       letter-spacing: 5px;
       animation: pulseGlow 0.5s ease-in-out infinite alternate;
-    ">${title}</div>
+    ">🏆 ${title} 🏆</div>
     <div style="
       font-family: 'Orbitron', sans-serif;
-      font-size: 36px;
+      font-size: 42px;
       color: white;
       text-shadow: 0 0 20px ${color}, 2px 2px 4px black;
-      margin-top: 10px;
+      margin-top: 15px;
     ">${playerName} - ${kills} KILLS!</div>
   `;
 

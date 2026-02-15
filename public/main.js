@@ -1201,11 +1201,32 @@ function updateLeaderboard() {
 const raycaster = new THREE.Raycaster();
 
 function shoot() {
-  if (!weaponSystem.canShoot()) return;
-
   const weapon = weaponSystem.getCurrentWeapon();
+
+  // Auto-reload when out of ammo
+  if (weapon.ammo <= 0 && !weaponSystem.isReloading) {
+    weaponSystem.reload();
+    showFloatingText('RELOADING...', '#ffaa00');
+    return;
+  }
+
+  if (!weaponSystem.canShoot()) {
+    // Show feedback if trying to shoot while reloading
+    if (weaponSystem.isReloading) {
+      // Already reloading, don't spam
+    }
+    return;
+  }
+
   const shots = weaponSystem.shoot();
   if (!shots) return;
+
+  // Show low ammo warning
+  if (weapon.ammo <= 10 && weapon.ammo > 0) {
+    document.getElementById('ammo-info').style.color = '#ff4444';
+  } else {
+    document.getElementById('ammo-info').style.color = '#ffffff';
+  }
 
   // Weapon recoil animation
   currentWeaponModel.position.z = -0.6;
@@ -1311,14 +1332,25 @@ function shoot() {
 
         // Check if hit a remote player (other human)
         for (const [playerId, remote] of remotePlayers) {
-          if (remote.mesh === hit.object || remote.mesh.children.some(child => child === hit.object || (child.children && child.children.includes(hit.object)))) {
+          // Check if hit object is part of remote player's mesh hierarchy
+          let hitRemotePlayer = false;
+          remote.mesh.traverse((child) => {
+            if (child === hit.object) {
+              hitRemotePlayer = true;
+            }
+          });
+
+          if (hitRemotePlayer) {
             // Only damage players from opposite team
             if (remote.data.team !== playerState.team) {
               showHitMarker();
+              console.log(`Hit remote player: ${remote.data.name} (${remote.data.team} team)`);
               // Send hit to server
               if (network && network.isConnected) {
                 network.sendHit(playerId, shot.damage);
               }
+            } else {
+              console.log(`Hit teammate: ${remote.data.name} - no damage (same team)`);
             }
             break;
           }

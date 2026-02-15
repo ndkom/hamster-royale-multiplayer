@@ -16,7 +16,11 @@ let playerName = null;
 let network = null;
 
 // Remote players (other humans in multiplayer)
-const remotePlayers = new Map(); // odid -> { mesh, data }
+const remotePlayers = new Map();
+
+// Health pickups on the map
+const healthPickups = new Map();
+const PICKUP_COLLECT_DISTANCE = 3; // How close to pick up health
 
 // Initialize network
 import { NetworkManager } from './NetworkManager.js';
@@ -55,6 +59,13 @@ async function joinGame(name, team, difficulty = 'medium') {
           if (p.id !== network.playerId && !p.isBot) {
             createRemotePlayer(p);
           }
+        });
+      }
+
+      // Create existing health pickups
+      if (initData.healthPickups) {
+        initData.healthPickups.forEach(h => {
+          createHealthPickup(h);
         });
       }
 
@@ -374,6 +385,94 @@ function removeRemotePlayer(playerId) {
   }
 }
 
+// ========== HEALTH PICKUP SYSTEM ==========
+
+// Create a health pickup visual
+function createHealthPickup(pickupData) {
+  if (healthPickups.has(pickupData.id)) return;
+
+  const group = new THREE.Group();
+
+  // Green cross shape
+  const material = new THREE.MeshStandardMaterial({
+    color: 0x00ff00,
+    emissive: 0x00ff00,
+    emissiveIntensity: 0.5,
+    metalness: 0.3,
+    roughness: 0.5
+  });
+
+  // Horizontal bar
+  const hBar = new THREE.Mesh(new THREE.BoxGeometry(1, 0.3, 0.3), material);
+  group.add(hBar);
+
+  // Vertical bar
+  const vBar = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1, 0.3), material);
+  group.add(vBar);
+
+  // Floating animation base position
+  group.position.set(pickupData.position.x, pickupData.position.y, pickupData.position.z);
+  group.userData.baseY = pickupData.position.y;
+  group.userData.pickupId = pickupData.id;
+
+  scene.add(group);
+  healthPickups.set(pickupData.id, { mesh: group, data: pickupData });
+  console.log(`Health pickup created: ${pickupData.id}`);
+}
+
+// Remove a health pickup
+function removeHealthPickup(pickupId) {
+  const pickup = healthPickups.get(pickupId);
+  if (pickup) {
+    scene.remove(pickup.mesh);
+    healthPickups.delete(pickupId);
+  }
+}
+
+// Animate health pickups (floating + rotating)
+function animateHealthPickups(time) {
+  healthPickups.forEach((pickup) => {
+    // Float up and down
+    pickup.mesh.position.y = pickup.mesh.userData.baseY + Math.sin(time * 2) * 0.3;
+    // Rotate
+    pickup.mesh.rotation.y += 0.02;
+  });
+}
+
+// Check if player is near a health pickup
+function checkHealthPickupCollision() {
+  if (!network || !network.isConnected) return;
+
+  healthPickups.forEach((pickup, pickupId) => {
+    const dist = player.position.distanceTo(pickup.mesh.position);
+    if (dist < PICKUP_COLLECT_DISTANCE) {
+      // Request pickup from server
+      network.socket.emit('pickupHealth', { pickupId });
+    }
+  });
+}
+
+// Mark player as frozen (visual indicator)
+function setRemotePlayerFrozen(playerId, isFrozen) {
+  const remote = remotePlayers.get(playerId);
+  if (remote) {
+    remote.isFrozen = isFrozen;
+    // Add blue tint when frozen
+    remote.mesh.traverse((child) => {
+      if (child.isMesh && child.material) {
+        if (isFrozen) {
+          child.material.emissive = new THREE.Color(0x0066ff);
+          child.material.emissiveIntensity = 0.5;
+        } else {
+          child.material.emissiveIntensity = 0;
+        }
+      }
+    });
+  }
+}
+
+// ========== END HEALTH PICKUP SYSTEM ==========
+
 // Setup network event listeners
 function setupNetworkListeners() {
   if (!network || !network.socket) return;
@@ -482,6 +581,44 @@ function setupNetworkListeners() {
   network.on('playerHealthUpdate', (data) => {
     if (data.id !== network.playerId) {
       updateRemotePlayerHealth(data.id, data.health);
+    }
+  });
+
+  // Health pickup spawned
+  network.on('healthSpawned', (data) => {
+    createHealthPickup(data);
+  });
+
+  // Health pickup collected
+  network.on('healthPickedUp', (data) => {
+    removeHealthPickup(data.pickupId);
+    if (data.playerId === network.playerId) {
+      playerState.health = data.newHealth;
+      updateUI();
+      showFloatingText(`+${data.healthGained} HP`, '#00ff00');
+    } else {
+      showFloatingText(`${data.playerName} +${data.healthGained} HP`, '#88ff88');
+    }
+  });
+
+  // Our health updated (when we pick up health)
+  network.on('healthUpdate', (data) => {
+    playerState.health = data.health;
+    updateUI();
+  });
+
+  // Player frozen (no activity)
+  network.on('playerFrozen', (data) => {
+    if (data.id !== network.playerId) {
+      setRemotePlayerFrozen(data.id, true);
+      showNotification(`${data.name} is frozen (no activity)`);
+    }
+  });
+
+  // Player unfrozen (resumed activity)
+  network.on('playerUnfrozen', (data) => {
+    if (data.id !== network.playerId) {
+      setRemotePlayerFrozen(data.id, false);
     }
   });
 }
@@ -1193,6 +1330,10 @@ function animate() {
 
   // Smooth interpolation for remote players
   interpolateRemotePlayers(deltaTime);
+
+  // Animate and check health pickups
+  animateHealthPickups(currentTime / 1000);
+  checkHealthPickupCollision();
 
   // Update build system preview (always show if near placement area)
   const now = Date.now();

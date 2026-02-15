@@ -14,14 +14,105 @@ const PORT = process.env.PORT || 3000;
 // Game state
 const players = new Map(); // playerId -> player data (both real and AI)
 const realPlayers = new Set(); // Track which players are real humans
+const healthPickups = new Map(); // Health pickups on the map
+const MAX_HEALTH_PICKUPS = 5;
+const HEALTH_RESPAWN_TIME = 15000; // 15 seconds to respawn
+const HEALTH_AMOUNT = 35; // Health restored per pickup
+const PLAYER_TIMEOUT = 10000; // 10 seconds without movement = frozen
+
 const gameState = {
   teamScores: { red: 0, blue: 0 },
   walls: [],
   projectiles: [],
-  difficulty: 'medium', // Default difficulty
-  gameStarted: true, // Game always running
+  difficulty: 'medium',
+  gameStarted: true,
   botsPerTeam: 10
 };
+
+// Generate random position for health pickup
+function randomHealthPosition() {
+  return {
+    x: Math.random() * 160 - 80, // -80 to 80
+    y: 1.5,
+    z: Math.random() * 160 - 80
+  };
+}
+
+// Spawn a health pickup
+function spawnHealthPickup() {
+  if (healthPickups.size >= MAX_HEALTH_PICKUPS) return;
+
+  const id = 'health-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+  const pickup = {
+    id,
+    position: randomHealthPosition(),
+    amount: HEALTH_AMOUNT,
+    active: true
+  };
+
+  healthPickups.set(id, pickup);
+  io.emit('healthSpawned', pickup);
+  console.log(`Health pickup spawned: ${id}`);
+}
+
+// Initialize health pickups
+function initializeHealthPickups() {
+  for (let i = 0; i < MAX_HEALTH_PICKUPS; i++) {
+    spawnHealthPickup();
+  }
+}
+
+// Check for frozen/disconnected players
+function checkFrozenPlayers() {
+  const now = Date.now();
+  for (const [playerId, player] of players.entries()) {
+    if (!player.isBot && player.lastActivity) {
+      const timeSinceActivity = now - player.lastActivity;
+      if (timeSinceActivity > PLAYER_TIMEOUT && !player.isFrozen) {
+        player.isFrozen = true;
+        io.emit('playerFrozen', { id: playerId, name: player.name });
+        console.log(`Player frozen: ${player.name} (no activity for ${timeSinceActivity}ms)`);
+      }
+      // Remove after 30 seconds of being frozen
+      if (timeSinceActivity > PLAYER_TIMEOUT * 3) {
+        console.log(`Removing frozen player: ${player.name}`);
+        players.delete(playerId);
+        realPlayers.delete(playerId);
+        io.emit('playerLeft', playerId);
+        // Spawn replacement bot
+        spawnReplacementBot(player.team, player.position);
+      }
+    }
+  }
+}
+
+// Spawn a replacement bot when player leaves/disconnects
+function spawnReplacementBot(team, position) {
+  const botCount = Array.from(players.values()).filter(p => p.isBot && p.team === team).length;
+  const botId = `bot-${team}-${Date.now()}`;
+  players.set(botId, {
+    id: botId,
+    name: `${team === 'red' ? 'Red' : 'Blue'} Bot ${botCount + 1}`,
+    team: team,
+    position: position,
+    rotation: 0,
+    health: 100,
+    kills: 0,
+    deaths: 0,
+    skinType: Math.floor(Math.random() * 5),
+    isBot: true
+  });
+  io.emit('botAdded', players.get(botId));
+}
+
+// Start periodic checks
+setInterval(checkFrozenPlayers, 2000); // Check every 2 seconds
+setInterval(() => {
+  // Respawn health pickups if below max
+  if (healthPickups.size < MAX_HEALTH_PICKUPS) {
+    spawnHealthPickup();
+  }
+}, 5000); // Check every 5 seconds
 
 // Initialize AI bots
 function initializeBots() {
@@ -62,8 +153,9 @@ function initializeBots() {
   console.log('Initialized 20 AI bots (10 per team)');
 }
 
-// Initialize bots on server start
+// Initialize bots and health pickups on server start
 initializeBots();
+initializeHealthPickups();
 
 // Serve static files
 app.use(express.static('public'));
@@ -108,22 +200,25 @@ io.on('connection', (socket) => {
       rotation: 0,
       health: 100,
       kills: 0,
-      playerKills: 0, // Kills of real players
-      botKills: 0,    // Kills of bots
+      playerKills: 0,
+      botKills: 0,
       deaths: 0,
       skinType: Math.floor(Math.random() * 5),
       isBot: false,
-      isDead: false,  // Track if player is dead (respawning)
-      joinedAt: Date.now()
+      isDead: false,
+      isFrozen: false,
+      joinedAt: Date.now(),
+      lastActivity: Date.now()
     });
-    
+
     realPlayers.add(socket.id);
 
-    // Send current game state to new player
+    // Send current game state to new player (including health pickups)
     socket.emit('init', {
       playerId: socket.id,
       players: Array.from(players.values()),
-      gameState: gameState
+      gameState: gameState,
+      healthPickups: Array.from(healthPickups.values())
     });
 
     // Notify all other players that bot was replaced
@@ -141,7 +236,14 @@ io.on('connection', (socket) => {
     if (player) {
       player.position = data.position;
       player.rotation = data.rotation;
-      
+      player.lastActivity = Date.now();
+
+      // Clear frozen status if player was frozen
+      if (player.isFrozen) {
+        player.isFrozen = false;
+        io.emit('playerUnfrozen', { id: socket.id });
+      }
+
       // Broadcast to other players
       socket.broadcast.emit('playerMoved', {
         id: socket.id,
@@ -296,13 +398,49 @@ io.on('connection', (socket) => {
 
   // Wall destroyed
   socket.on('wallDestroyed', (data) => {
-    gameState.walls = gameState.walls.filter(w => 
-      w.position.x !== data.position.x || 
+    gameState.walls = gameState.walls.filter(w =>
+      w.position.x !== data.position.x ||
       w.position.z !== data.position.z
     );
-    
+
     // Broadcast to all players
     io.emit('wallRemoved', data);
+  });
+
+  // Player picks up health
+  socket.on('pickupHealth', (data) => {
+    const player = players.get(socket.id);
+    const pickup = healthPickups.get(data.pickupId);
+
+    if (player && pickup && pickup.active) {
+      // Give health to player (cap at 100)
+      const oldHealth = player.health;
+      player.health = Math.min(100, player.health + pickup.amount);
+      const healthGained = player.health - oldHealth;
+
+      // Remove pickup
+      pickup.active = false;
+      healthPickups.delete(data.pickupId);
+
+      // Notify all players
+      io.emit('healthPickedUp', {
+        pickupId: data.pickupId,
+        playerId: socket.id,
+        playerName: player.name,
+        healthGained: healthGained,
+        newHealth: player.health
+      });
+
+      // Notify the player who picked it up
+      socket.emit('healthUpdate', { health: player.health });
+
+      console.log(`${player.name} picked up health (+${healthGained})`);
+
+      // Respawn health after delay
+      setTimeout(() => {
+        spawnHealthPickup();
+      }, HEALTH_RESPAWN_TIME);
+    }
   });
 
   // Player disconnects - replace with bot

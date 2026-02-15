@@ -15,6 +15,9 @@ let selectedTeam = null;
 let playerName = null;
 let network = null;
 
+// Remote players (other humans in multiplayer)
+const remotePlayers = new Map(); // odid -> { mesh, data }
+
 // Initialize network
 import { NetworkManager } from './NetworkManager.js';
 
@@ -39,10 +42,22 @@ async function joinGame(name, team, difficulty = 'medium') {
       
       // Join game immediately - replaces a bot
       const initData = await network.joinGame(name, team, difficulty);
-      
+
       // Start game right away
       startGame(difficulty);
-      
+
+      // Setup multiplayer event listeners
+      setupNetworkListeners();
+
+      // Create existing players from server
+      if (initData.players) {
+        initData.players.forEach(p => {
+          if (p.id !== network.playerId && !p.isBot) {
+            createRemotePlayer(p);
+          }
+        });
+      }
+
       showNotification(`Welcome ${name}! You replaced a bot on ${team} team.`);
       
     } catch (error) {
@@ -121,6 +136,158 @@ function showNotification(message) {
     notification.remove();
   }, 3000);
 }
+
+// ========== MULTIPLAYER FUNCTIONS ==========
+
+// Create a remote player's hamster model
+function createRemotePlayer(playerData) {
+  if (remotePlayers.has(playerData.id)) return;
+
+  const teamColor = playerData.team === 'red' ? CONFIG.teams.red.color : CONFIG.teams.blue.color;
+  const mesh = createHamster(teamColor, playerData.skinType);
+  mesh.position.set(playerData.position.x, playerData.position.y, playerData.position.z);
+  mesh.rotation.y = playerData.rotation || 0;
+  scene.add(mesh);
+
+  // Add name tag above player
+  const nameTag = createNameTag(playerData.name, playerData.team);
+  nameTag.position.y = 2.5;
+  mesh.add(nameTag);
+
+  remotePlayers.set(playerData.id, { mesh, data: playerData, nameTag });
+  console.log(`Remote player joined: ${playerData.name} (${playerData.team} team)`);
+}
+
+// Create floating name tag
+function createNameTag(name, team) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = team === 'red' ? '#ff4444' : '#4444ff';
+  ctx.fillRect(0, 0, 256, 64);
+  ctx.fillStyle = 'white';
+  ctx.font = 'bold 32px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText(name, 128, 42);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  const material = new THREE.SpriteMaterial({ map: texture });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(2, 0.5, 1);
+  return sprite;
+}
+
+// Update remote player position
+function updateRemotePlayer(playerId, position, rotation) {
+  const remote = remotePlayers.get(playerId);
+  if (remote) {
+    remote.mesh.position.set(position.x, position.y, position.z);
+    remote.mesh.rotation.y = rotation;
+  }
+}
+
+// Remove remote player
+function removeRemotePlayer(playerId) {
+  const remote = remotePlayers.get(playerId);
+  if (remote) {
+    scene.remove(remote.mesh);
+    remotePlayers.delete(playerId);
+    console.log(`Remote player left: ${playerId}`);
+  }
+}
+
+// Setup network event listeners
+function setupNetworkListeners() {
+  if (!network || !network.socket) return;
+
+  // Another player joined
+  network.on('playerJoined', (playerData) => {
+    if (!playerData.isBot) {
+      createRemotePlayer(playerData);
+      showNotification(`${playerData.name} joined ${playerData.team} team!`);
+    }
+  });
+
+  // Player moved
+  network.on('playerMoved', (data) => {
+    updateRemotePlayer(data.id, data.position, data.rotation);
+  });
+
+  // Player left
+  network.on('playerLeft', (playerId) => {
+    const remote = remotePlayers.get(playerId);
+    if (remote) {
+      showNotification(`${remote.data.name} left the game`);
+      removeRemotePlayer(playerId);
+    }
+  });
+
+  // Player shot (show their projectile)
+  network.on('playerShot', (data) => {
+    if (data.playerId !== network.playerId) {
+      const pos = new THREE.Vector3(data.position.x, data.position.y, data.position.z);
+      const dir = new THREE.Vector3(data.direction.x, data.direction.y, data.direction.z);
+      createProjectile(pos, dir, data.color, false);
+    }
+  });
+
+  // Player killed
+  network.on('playerKilled', (data) => {
+    showNotification(`${data.killerName} eliminated ${data.victimName}!`);
+    teamScores.red = data.teamScores.red;
+    teamScores.blue = data.teamScores.blue;
+    updateUI();
+  });
+
+  // We took damage
+  network.on('takeDamage', (data) => {
+    playerState.health = Math.max(0, playerState.health - data.damage);
+    updateUI();
+    if (playerState.health <= 0) {
+      playerState.deaths++;
+      respawnPlayer();
+    }
+  });
+
+  // We respawned
+  network.on('respawn', (data) => {
+    player.position.set(data.position.x, data.position.y, data.position.z);
+    playerState.health = data.health;
+    updateUI();
+  });
+
+  // Leaderboard data
+  network.on('leaderboard', (data) => {
+    updateLeaderboardFromServer(data);
+  });
+}
+
+// Update leaderboard with server data
+function updateLeaderboardFromServer(data) {
+  const leaderboardBody = document.getElementById('leaderboard-body');
+  document.getElementById('red-team-score').textContent = data.teamScores.red;
+  document.getElementById('blue-team-score').textContent = data.teamScores.blue;
+
+  leaderboardBody.innerHTML = data.players.map((p, index) => {
+    const teamColor = p.team === 'red' ? '#ff4444' : '#4444ff';
+    const teamEmoji = p.team === 'red' ? '🔴' : '🔵';
+    const kd = p.deaths > 0 ? (p.kills / p.deaths).toFixed(2) : p.kills.toFixed(2);
+    return `
+      <tr style="border-bottom: 1px solid #333;">
+        <td style="padding: 10px; text-align: left;">#${index + 1}</td>
+        <td style="padding: 10px; text-align: left; font-weight: bold;">${p.name}</td>
+        <td style="padding: 10px; text-align: center; color: ${teamColor};">${teamEmoji}</td>
+        <td style="padding: 10px; text-align: center;">${p.kills}</td>
+        <td style="padding: 10px; text-align: center;">${p.deaths}</td>
+        <td style="padding: 10px; text-align: center; color: #00ffff;">${kd}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+// ========== END MULTIPLAYER FUNCTIONS ==========
 
 // Scene setup
 const scene = new THREE.Scene();
@@ -373,7 +540,12 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     const leaderboard = document.getElementById('leaderboard');
     if (leaderboard.style.display === 'none') {
-      updateLeaderboard();
+      // Request leaderboard from server in multiplayer
+      if (network && network.isConnected && network.socket) {
+        network.socket.emit('requestLeaderboard');
+      } else {
+        updateLeaderboard();
+      }
       leaderboard.style.display = 'block';
     } else {
       leaderboard.style.display = 'none';
@@ -682,6 +854,11 @@ function updatePlayer(deltaTime) {
     if (!blocked) {
       player.position.copy(nextPosition);
     }
+  }
+
+  // Send position to server for multiplayer
+  if (network && network.isConnected) {
+    network.sendPosition(player.position, cameraController.rotationY);
   }
 }
 

@@ -1312,12 +1312,14 @@ function shoot() {
 
       raycaster.set(camera.position, direction);
 
-      // Check for hits - include remote players
-      const targets = enemies.map(e => e.mesh);
-      const remotePlayerMeshes = Array.from(remotePlayers.values()).map(r => r.mesh);
-      const walls = buildSystem.getWalls().map(w => w.mesh);
-      const obstacleMeshes = obstacles.map(o => o.mesh);
-      const intersects = raycaster.intersectObjects([...targets, ...remotePlayerMeshes, ...walls, ...obstacleMeshes], true);
+      // Check for hits - include remote players (filter out null/undefined meshes)
+      const targets = enemies.map(e => e?.mesh).filter(m => m != null);
+      const remotePlayerMeshes = Array.from(remotePlayers.values()).map(r => r?.mesh).filter(m => m != null);
+      const walls = buildSystem.getWalls().map(w => w?.mesh).filter(m => m != null);
+      const obstacleMeshes = obstacles.map(o => o?.mesh).filter(m => m != null);
+      const allTargets = [...targets, ...remotePlayerMeshes, ...walls, ...obstacleMeshes];
+
+      const intersects = allTargets.length > 0 ? raycaster.intersectObjects(allTargets, true) : [];
 
       if (intersects.length > 0) {
         const hit = intersects[0];

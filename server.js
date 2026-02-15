@@ -363,8 +363,10 @@ io.on('connection', (socket) => {
   // Request leaderboard
   socket.on('requestLeaderboard', () => {
     const now = Date.now();
-    const leaderboard = Array.from(players.values())
-      .filter(p => !p.isBot) // Only real players
+    const realPlayersList = Array.from(players.values()).filter(p => !p.isBot);
+    console.log(`Leaderboard requested. Real players: ${realPlayersList.length}`);
+
+    const leaderboard = realPlayersList
       .sort((a, b) => b.kills - a.kills)
       .map(p => ({
         name: p.name,

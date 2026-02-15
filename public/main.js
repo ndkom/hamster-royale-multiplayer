@@ -43,22 +43,25 @@ async function joinGame(name, team, difficulty = 'medium') {
     network = new NetworkManager();
     try {
       await network.connect(window.location.origin);
-      
+      console.log('Connected to server!');
+
+      // Setup multiplayer event listeners BEFORE joining (to not miss any events)
+      setupNetworkListeners();
+
       // Join game immediately - replaces a bot
       const initData = await network.joinGame(name, team, difficulty);
+      console.log('Joined game, received init data:', initData.players?.length, 'players');
 
       // Start game right away
       startGame(difficulty);
 
-      // Setup multiplayer event listeners
-      setupNetworkListeners();
-
       // Create existing players from server
       if (initData.players) {
-        initData.players.forEach(p => {
-          if (p.id !== network.playerId && !p.isBot) {
-            createRemotePlayer(p);
-          }
+        const realPlayers = initData.players.filter(p => p.id !== network.playerId && !p.isBot);
+        console.log('Creating', realPlayers.length, 'existing remote players');
+        realPlayers.forEach(p => {
+          console.log('Creating remote player:', p.name, p.team);
+          createRemotePlayer(p);
         });
       }
 
@@ -68,6 +71,16 @@ async function joinGame(name, team, difficulty = 'medium') {
           createHealthPickup(h);
         });
       }
+
+      // Start position heartbeat - send position every 500ms even if not moving
+      setInterval(() => {
+        if (network && network.isConnected && gameStarted) {
+          network.socket.emit('playerMove', {
+            position: { x: player.position.x, y: player.position.y, z: player.position.z },
+            rotation: cameraController?.rotationY || 0
+          });
+        }
+      }, 500);
 
       showNotification(`Welcome ${name}! You replaced a bot on ${team} team.`);
       
@@ -268,7 +281,22 @@ function showMilestoneAnnouncement(playerName, title, kills, color) {
 
 // Create a remote player's hamster model
 function createRemotePlayer(playerData) {
-  if (remotePlayers.has(playerData.id)) return;
+  // If player already exists, update their data instead of creating new
+  if (remotePlayers.has(playerData.id)) {
+    const existing = remotePlayers.get(playerData.id);
+    // Update data with new info (in case this is the proper join event after a placeholder)
+    existing.data = playerData;
+    // Update name tag if name was placeholder
+    if (existing.nameTag && playerData.name !== 'Player') {
+      existing.mesh.remove(existing.nameTag);
+      const newNameTag = createNameTag(playerData.name, playerData.team);
+      newNameTag.position.y = 3.0;
+      existing.mesh.add(newNameTag);
+      existing.nameTag = newNameTag;
+    }
+    console.log(`Updated existing remote player: ${playerData.name}`);
+    return;
+  }
 
   const teamColor = playerData.team === 'red' ? CONFIG.teams.red.color : CONFIG.teams.blue.color;
   const mesh = createHamster(teamColor, playerData.skinType);
@@ -383,18 +411,51 @@ function createNameTag(name, team) {
 
 // Update remote player position (set target for interpolation)
 function updateRemotePlayer(playerId, position, rotation) {
-  const remote = remotePlayers.get(playerId);
+  let remote = remotePlayers.get(playerId);
+
+  // If player doesn't exist yet, create them (handles race condition)
+  if (!remote && playerId !== network?.playerId) {
+    console.log(`Creating player on-the-fly: ${playerId}`);
+    // Create with basic data - will be updated when proper join event arrives
+    createRemotePlayer({
+      id: playerId,
+      name: 'Player',
+      team: 'red', // Default, will be updated
+      position: position,
+      rotation: rotation,
+      skinType: 0
+    });
+    remote = remotePlayers.get(playerId);
+  }
+
   if (remote) {
     // Store target position for smooth interpolation
     remote.targetPosition = { x: position.x, y: position.y, z: position.z };
     remote.targetRotation = rotation;
+    remote.lastUpdate = Date.now();
   }
 }
 
 // Interpolate all remote players for smooth movement
 function interpolateRemotePlayers(deltaTime) {
   const lerpSpeed = 15; // Higher = faster catch-up
-  remotePlayers.forEach((remote) => {
+  const now = Date.now();
+  const staleTimeout = 10000; // 10 seconds without update = stale
+
+  remotePlayers.forEach((remote, playerId) => {
+    // Mark stale players visually
+    if (remote.lastUpdate && now - remote.lastUpdate > staleTimeout) {
+      if (!remote.isStale) {
+        remote.isStale = true;
+        remote.mesh.traverse((child) => {
+          if (child.isMesh && child.material) {
+            child.material.transparent = true;
+            child.material.opacity = 0.4;
+          }
+        });
+      }
+    }
+
     if (remote.targetPosition) {
       // Smoothly interpolate position
       remote.mesh.position.x += (remote.targetPosition.x - remote.mesh.position.x) * lerpSpeed * deltaTime;
@@ -513,9 +574,11 @@ function setRemotePlayerFrozen(playerId, isFrozen) {
 // Setup network event listeners
 function setupNetworkListeners() {
   if (!network || !network.socket) return;
+  console.log('Setting up network listeners...');
 
   // Another player joined
   network.on('playerJoined', (playerData) => {
+    console.log('playerJoined event:', playerData.name, playerData.team, 'isBot:', playerData.isBot);
     if (!playerData.isBot) {
       createRemotePlayer(playerData);
       showNotification(`${playerData.name} joined ${playerData.team} team!`);

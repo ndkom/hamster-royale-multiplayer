@@ -273,9 +273,21 @@ io.on('connection', (socket) => {
     const { targetId, damage } = data;
     const target = players.get(targetId);
     const shooter = players.get(socket.id);
-    
-    if (target && shooter) {
-      target.health -= damage;
+
+    console.log(`HIT EVENT: ${shooter?.name || 'unknown'} -> ${target?.name || 'unknown'} (${targetId}) for ${damage} damage`);
+
+    if (!target) {
+      console.log(`  ERROR: Target ${targetId} not found in players!`);
+      console.log(`  Available players:`, Array.from(players.keys()));
+      return;
+    }
+    if (!shooter) {
+      console.log(`  ERROR: Shooter ${socket.id} not found!`);
+      return;
+    }
+
+    target.health -= damage;
+    console.log(`  ${target.name} health: ${target.health + damage} -> ${target.health}`);
 
       // Notify target they were hit (only if real player)
       if (!target.isBot) {

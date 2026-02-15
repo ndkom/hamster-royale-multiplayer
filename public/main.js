@@ -1001,24 +1001,36 @@ function initGame() {
 const projectiles = [];
 
 function createProjectile(position, direction, color, isEnemy = false, damage = 10, team = null) {
-  const geometry = new THREE.SphereGeometry(0.1, 8, 8);
-  const material = new THREE.MeshBasicMaterial({ 
+  // Make projectile bigger and more visible
+  const geometry = new THREE.SphereGeometry(0.25, 12, 12);
+  const material = new THREE.MeshStandardMaterial({
     color: color,
     emissive: color,
-    emissiveIntensity: 1
+    emissiveIntensity: 2,
+    metalness: 0.8,
+    roughness: 0.2
   });
   const mesh = new THREE.Mesh(geometry, material);
-  mesh.position.copy(position);
+
+  // Offset projectile slightly forward so it's not inside the player
+  const offsetDir = direction.clone().normalize();
+  mesh.position.copy(position).add(offsetDir.multiplyScalar(1.5));
+
   scene.add(mesh);
+
+  // Clone direction for velocity calculation
+  const velocity = direction.clone().normalize().multiplyScalar(80);
 
   projectiles.push({
     mesh,
-    velocity: direction.multiplyScalar(100),
-    lifetime: 2,
+    velocity: velocity,
+    lifetime: 3,
     isEnemy,
     damage,
     team
   });
+
+  console.log('Projectile created at', mesh.position.x.toFixed(1), mesh.position.y.toFixed(1), mesh.position.z.toFixed(1));
 }
 
 // Input handling
@@ -1344,13 +1356,17 @@ function shoot() {
             // Only damage players from opposite team
             if (remote.data.team !== playerState.team) {
               showHitMarker();
-              console.log(`Hit remote player: ${remote.data.name} (${remote.data.team} team)`);
+              console.log(`HIT! Remote player: ${remote.data.name} (ID: ${playerId}, team: ${remote.data.team})`);
+              console.log(`  My team: ${playerState.team}, sending ${shot.damage} damage`);
               // Send hit to server
               if (network && network.isConnected) {
                 network.sendHit(playerId, shot.damage);
+                console.log(`  Sent hit event to server`);
+              } else {
+                console.log(`  ERROR: Network not connected!`);
               }
             } else {
-              console.log(`Hit teammate: ${remote.data.name} - no damage (same team)`);
+              console.log(`Hit teammate: ${remote.data.name} - no damage (same team: ${remote.data.team})`);
             }
             break;
           }

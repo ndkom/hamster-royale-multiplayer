@@ -7,8 +7,8 @@ import { BuildSystem } from './BuildSystem.js';
 import { generateEnvironment } from './Environment.js';
 import { CONFIG } from './config.js';
 
-// VERSION 3 - projectile created BEFORE hit detection
-console.log('=== HAMSTER ROYALE v3 LOADED ===');
+// VERSION 4 - projectile created BEFORE hit detection + no cache
+console.log('=== HAMSTER ROYALE v4 LOADED ===');
 
 // Global game state
 let gameStarted = false;

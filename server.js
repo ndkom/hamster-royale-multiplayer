@@ -108,10 +108,13 @@ io.on('connection', (socket) => {
       rotation: 0,
       health: 100,
       kills: 0,
+      playerKills: 0, // Kills of real players
+      botKills: 0,    // Kills of bots
       deaths: 0,
       skinType: Math.floor(Math.random() * 5),
       isBot: false,
-      joinedAt: Date.now() // Track when player joined for session time
+      isDead: false,  // Track if player is dead (respawning)
+      joinedAt: Date.now()
     });
     
     realPlayers.add(socket.id);
@@ -171,39 +174,66 @@ io.on('connection', (socket) => {
     
     if (target && shooter) {
       target.health -= damage;
-      
+
       // Notify target they were hit (only if real player)
       if (!target.isBot) {
-        io.to(targetId).emit('takeDamage', { damage, from: socket.id });
+        io.to(targetId).emit('takeDamage', { damage, from: socket.id, health: target.health });
       }
-      
+
+      // Broadcast health update to all players (so they see health bars)
+      io.emit('playerHealthUpdate', {
+        id: targetId,
+        health: target.health
+      });
+
       // Check if player died
       if (target.health <= 0) {
         // Update scores
         gameState.teamScores[shooter.team]++;
         shooter.kills++;
         target.deaths = (target.deaths || 0) + 1;
-        
-        // Notify all players of kill
+
+        // Track player vs bot kills
+        if (target.isBot) {
+          shooter.botKills = (shooter.botKills || 0) + 1;
+        } else {
+          shooter.playerKills = (shooter.playerKills || 0) + 1;
+        }
+
+        // Mark target as dead
+        target.isDead = true;
+
+        // Notify all players of kill (include kill breakdown)
         io.emit('playerKilled', {
           killerId: socket.id,
           killerName: shooter.name,
           killerKills: shooter.kills,
+          killerPlayerKills: shooter.playerKills || 0,
+          killerBotKills: shooter.botKills || 0,
           victimId: targetId,
           victimName: target.name,
+          victimIsBot: target.isBot,
           teamScores: gameState.teamScores
         });
-        
+
+        // Broadcast that player is dead (for visual indicator)
+        io.emit('playerDied', {
+          id: targetId,
+          name: target.name,
+          respawnIn: 3000
+        });
+
         // Respawn target after delay
         setTimeout(() => {
           if (players.has(targetId)) {
             target.health = 100;
-            target.position = { 
+            target.isDead = false;
+            target.position = {
               x: Math.random() * 40 - 20,
-              y: 1, 
+              y: 1,
               z: target.team === 'red' ? 40 + Math.random() * 20 : -40 - Math.random() * 20
             };
-            
+
             // Notify if real player
             if (!target.isBot) {
               io.to(targetId).emit('respawn', {
@@ -211,10 +241,11 @@ io.on('connection', (socket) => {
                 health: target.health
               });
             }
-            
+
             io.emit('playerRespawned', {
               id: targetId,
-              position: target.position
+              position: target.position,
+              health: target.health
             });
           }
         }, 3000);
@@ -237,8 +268,11 @@ io.on('connection', (socket) => {
         name: p.name,
         team: p.team,
         kills: p.kills,
+        playerKills: p.playerKills || 0,
+        botKills: p.botKills || 0,
         deaths: p.deaths || 0,
-        playTime: Math.floor((now - (p.joinedAt || now)) / 1000) // Seconds played
+        isDead: p.isDead || false,
+        playTime: Math.floor((now - (p.joinedAt || now)) / 1000)
       }));
 
     socket.emit('leaderboard', {

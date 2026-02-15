@@ -230,11 +230,86 @@ function createRemotePlayer(playerData) {
 
   // Add name tag above player
   const nameTag = createNameTag(playerData.name, playerData.team);
-  nameTag.position.y = 2.5;
+  nameTag.position.y = 3.0;
   mesh.add(nameTag);
 
-  remotePlayers.set(playerData.id, { mesh, data: playerData, nameTag });
+  // Add health bar above player
+  const healthBar = createHealthBar();
+  healthBar.position.y = 2.5;
+  mesh.add(healthBar);
+
+  remotePlayers.set(playerData.id, {
+    mesh,
+    data: playerData,
+    nameTag,
+    healthBar,
+    health: 100,
+    isDead: false,
+    lastUpdate: Date.now()
+  });
   console.log(`Remote player joined: ${playerData.name} (${playerData.team} team)`);
+}
+
+// Create health bar for remote player
+function createHealthBar() {
+  const group = new THREE.Group();
+
+  // Background (dark red)
+  const bgGeometry = new THREE.PlaneGeometry(1.5, 0.15);
+  const bgMaterial = new THREE.MeshBasicMaterial({ color: 0x330000, side: THREE.DoubleSide });
+  const bg = new THREE.Mesh(bgGeometry, bgMaterial);
+  group.add(bg);
+
+  // Health fill (green)
+  const fillGeometry = new THREE.PlaneGeometry(1.5, 0.15);
+  const fillMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00, side: THREE.DoubleSide });
+  const fill = new THREE.Mesh(fillGeometry, fillMaterial);
+  fill.position.z = 0.01;
+  fill.name = 'healthFill';
+  group.add(fill);
+
+  return group;
+}
+
+// Update remote player health bar
+function updateRemotePlayerHealth(playerId, health) {
+  const remote = remotePlayers.get(playerId);
+  if (remote && remote.healthBar) {
+    remote.health = health;
+    const fill = remote.healthBar.getObjectByName('healthFill');
+    if (fill) {
+      const percent = Math.max(0, health / 100);
+      fill.scale.x = percent;
+      fill.position.x = -(1 - percent) * 0.75;
+      // Change color based on health
+      if (health > 60) {
+        fill.material.color.setHex(0x00ff00);
+      } else if (health > 30) {
+        fill.material.color.setHex(0xffaa00);
+      } else {
+        fill.material.color.setHex(0xff0000);
+      }
+    }
+  }
+}
+
+// Mark remote player as dead
+function setRemotePlayerDead(playerId, isDead) {
+  const remote = remotePlayers.get(playerId);
+  if (remote) {
+    remote.isDead = isDead;
+    // Make player semi-transparent when dead
+    remote.mesh.traverse((child) => {
+      if (child.isMesh && child.material) {
+        child.material.transparent = true;
+        child.material.opacity = isDead ? 0.3 : 1.0;
+      }
+    });
+    // Hide/show health bar
+    if (remote.healthBar) {
+      remote.healthBar.visible = !isDead;
+    }
+  }
 }
 
 // Create floating name tag
@@ -389,8 +464,62 @@ function setupNetworkListeners() {
   network.on('playerRespawned', (data) => {
     if (data.id !== network.playerId) {
       updateRemotePlayer(data.id, data.position, 0);
+      setRemotePlayerDead(data.id, false);
+      updateRemotePlayerHealth(data.id, data.health || 100);
     }
   });
+
+  // Player died - show visual indicator
+  network.on('playerDied', (data) => {
+    if (data.id !== network.playerId) {
+      setRemotePlayerDead(data.id, true);
+      // Show floating "DEAD" text briefly
+      showFloatingText(data.name + ' DEAD!', '#ff0000');
+    }
+  });
+
+  // Health update for remote player (when they take damage)
+  network.on('playerHealthUpdate', (data) => {
+    if (data.id !== network.playerId) {
+      updateRemotePlayerHealth(data.id, data.health);
+    }
+  });
+}
+
+// Show floating text notification
+function showFloatingText(text, color) {
+  const notification = document.createElement('div');
+  notification.style.cssText = `
+    position: fixed;
+    top: 30%;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: 'Orbitron', sans-serif;
+    font-size: 28px;
+    font-weight: bold;
+    color: ${color};
+    text-shadow: 2px 2px 4px black;
+    z-index: 10000;
+    pointer-events: none;
+    animation: floatUp 2s ease-out forwards;
+  `;
+  notification.textContent = text;
+
+  // Add animation
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes floatUp {
+      0% { opacity: 1; transform: translateX(-50%) translateY(0); }
+      100% { opacity: 0; transform: translateX(-50%) translateY(-50px); }
+    }
+  `;
+  document.head.appendChild(style);
+  document.body.appendChild(notification);
+
+  setTimeout(() => {
+    notification.remove();
+    style.remove();
+  }, 2000);
 }
 
 // Update leaderboard with server data
@@ -404,12 +533,18 @@ function updateLeaderboardFromServer(data) {
     const teamEmoji = p.team === 'red' ? '🔴' : '🔵';
     const kd = p.deaths > 0 ? (p.kills / p.deaths).toFixed(2) : p.kills.toFixed(2);
     const playTime = formatPlayTime(p.playTime || 0);
+    const statusIcon = p.isDead ? '💀' : '✅';
+    const playerKills = p.playerKills || 0;
+    const botKills = p.botKills || 0;
     return `
-      <tr style="border-bottom: 1px solid #333;">
+      <tr style="border-bottom: 1px solid #333; ${p.isDead ? 'opacity: 0.5;' : ''}">
         <td style="padding: 10px; text-align: left;">#${index + 1}</td>
-        <td style="padding: 10px; text-align: left; font-weight: bold;">${p.name}</td>
+        <td style="padding: 10px; text-align: left; font-weight: bold;">${statusIcon} ${p.name}</td>
         <td style="padding: 10px; text-align: center; color: ${teamColor};">${teamEmoji}</td>
-        <td style="padding: 10px; text-align: center;">${p.kills}</td>
+        <td style="padding: 10px; text-align: center;">
+          <span style="color: #ff6666;" title="Player kills">${playerKills}P</span> /
+          <span style="color: #888;" title="Bot kills">${botKills}B</span>
+        </td>
         <td style="padding: 10px; text-align: center;">${p.deaths}</td>
         <td style="padding: 10px; text-align: center; color: #00ffff;">${kd}</td>
         <td style="padding: 10px; text-align: center; color: #ffaa00;">${playTime}</td>

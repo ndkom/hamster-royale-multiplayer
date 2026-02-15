@@ -157,8 +157,16 @@ function initializeBots() {
 initializeBots();
 initializeHealthPickups();
 
-// Serve static files
-app.use(express.static('public'));
+// Serve static files with no-cache headers for JS files
+app.use(express.static('public', {
+  setHeaders: (res, path) => {
+    if (path.endsWith('.js')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  }
+}));
 
 app.get('/', (req, res) => {
   res.sendFile(__dirname + '/public/index.html');

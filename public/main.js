@@ -7,8 +7,8 @@ import { BuildSystem } from './BuildSystem.js';
 import { generateEnvironment } from './Environment.js';
 import { CONFIG } from './config.js';
 
-// VERSION 2 - with shooting fixes
-console.log('=== HAMSTER ROYALE v2 LOADED ===');
+// VERSION 3 - projectile created BEFORE hit detection
+console.log('=== HAMSTER ROYALE v3 LOADED ===');
 
 // Global game state
 let gameStarted = false;
@@ -1313,16 +1313,26 @@ function shoot() {
         network.sendShoot(camera.position, direction, weapon.name, shot.color);
       }
 
-      raycaster.set(camera.position, direction);
+      // ALWAYS create projectile FIRST (before hit detection which might crash)
+      createProjectile(camera.position.clone(), direction.clone(), shot.color, false);
 
-      // Check for hits - include remote players (filter out null/undefined meshes)
-      const targets = enemies.map(e => e?.mesh).filter(m => m != null);
-      const remotePlayerMeshes = Array.from(remotePlayers.values()).map(r => r?.mesh).filter(m => m != null);
-      const walls = buildSystem.getWalls().map(w => w?.mesh).filter(m => m != null);
-      const obstacleMeshes = obstacles.map(o => o?.mesh).filter(m => m != null);
-      const allTargets = [...targets, ...remotePlayerMeshes, ...walls, ...obstacleMeshes];
+      // Try hit detection - wrapped in try-catch to not break shooting
+      let intersects = [];
+      try {
+        raycaster.set(camera.position, direction);
 
-      const intersects = allTargets.length > 0 ? raycaster.intersectObjects(allTargets, true) : [];
+        // Check for hits - include remote players (filter out null/undefined meshes)
+        // Also check that mesh is in scene (has parent)
+        const targets = enemies.map(e => e?.mesh).filter(m => m != null && m.parent != null);
+        const remotePlayerMeshes = Array.from(remotePlayers.values()).map(r => r?.mesh).filter(m => m != null && m.parent != null);
+        const walls = buildSystem.getWalls().map(w => w?.mesh).filter(m => m != null && m.parent != null);
+        const obstacleMeshes = obstacles.map(o => o?.mesh).filter(m => m != null && m.parent != null);
+        const allTargets = [...targets, ...remotePlayerMeshes, ...walls, ...obstacleMeshes];
+
+        intersects = allTargets.length > 0 ? raycaster.intersectObjects(allTargets, true) : [];
+      } catch (raycastError) {
+        console.error('Raycast error (ignored):', raycastError.message);
+      }
 
       if (intersects.length > 0) {
         const hit = intersects[0];
@@ -1394,11 +1404,6 @@ function shoot() {
 
         // Obstacles block shots but don't take damage (trees/rocks)
       }
-
-      // Create visual projectile
-      console.log(`  Creating projectile with color:`, shot.color);
-      createProjectile(camera.position.clone(), direction.clone(), shot.color, false);
-      console.log(`  Projectiles in scene: ${projectiles.length}`);
     });
   }
 

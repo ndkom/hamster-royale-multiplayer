@@ -7,6 +7,9 @@ import { BuildSystem } from './BuildSystem.js';
 import { generateEnvironment } from './Environment.js';
 import { CONFIG } from './config.js';
 
+// VERSION 2 - with shooting fixes
+console.log('=== HAMSTER ROYALE v2 LOADED ===');
+
 // Global game state
 let gameStarted = false;
 let selectedDifficulty = null;

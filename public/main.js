@@ -258,13 +258,35 @@ function createNameTag(name, team) {
   return sprite;
 }
 
-// Update remote player position
+// Update remote player position (set target for interpolation)
 function updateRemotePlayer(playerId, position, rotation) {
   const remote = remotePlayers.get(playerId);
   if (remote) {
-    remote.mesh.position.set(position.x, position.y, position.z);
-    remote.mesh.rotation.y = rotation;
+    // Store target position for smooth interpolation
+    remote.targetPosition = { x: position.x, y: position.y, z: position.z };
+    remote.targetRotation = rotation;
   }
+}
+
+// Interpolate all remote players for smooth movement
+function interpolateRemotePlayers(deltaTime) {
+  const lerpSpeed = 15; // Higher = faster catch-up
+  remotePlayers.forEach((remote) => {
+    if (remote.targetPosition) {
+      // Smoothly interpolate position
+      remote.mesh.position.x += (remote.targetPosition.x - remote.mesh.position.x) * lerpSpeed * deltaTime;
+      remote.mesh.position.y += (remote.targetPosition.y - remote.mesh.position.y) * lerpSpeed * deltaTime;
+      remote.mesh.position.z += (remote.targetPosition.z - remote.mesh.position.z) * lerpSpeed * deltaTime;
+    }
+    if (remote.targetRotation !== undefined) {
+      // Smoothly interpolate rotation
+      let rotDiff = remote.targetRotation - remote.mesh.rotation.y;
+      // Handle wrap-around
+      while (rotDiff > Math.PI) rotDiff -= Math.PI * 2;
+      while (rotDiff < -Math.PI) rotDiff += Math.PI * 2;
+      remote.mesh.rotation.y += rotDiff * lerpSpeed * deltaTime;
+    }
+  });
 }
 
 // Remove remote player
@@ -349,6 +371,25 @@ function setupNetworkListeners() {
   // Leaderboard data
   network.on('leaderboard', (data) => {
     updateLeaderboardFromServer(data);
+  });
+
+  // Wall created by another player
+  network.on('wallCreated', (data) => {
+    // Only create if we didn't place it (avoid duplicates)
+    const pos = new THREE.Vector3(data.position.x, data.position.y, data.position.z);
+    buildSystem.createWallFromNetwork(pos, data.rotation);
+  });
+
+  // Wall destroyed
+  network.on('wallRemoved', (data) => {
+    buildSystem.removeWallAt(data.position);
+  });
+
+  // Player respawned (update their position)
+  network.on('playerRespawned', (data) => {
+    if (data.id !== network.playerId) {
+      updateRemotePlayer(data.id, data.position, 0);
+    }
   });
 }
 
@@ -619,6 +660,12 @@ document.addEventListener('keydown', (e) => {
     if (now - playerState.lastWallPlaceTime >= CONFIG.build.buildCooldown) {
       if (buildSystem.placeWall(player.position, cameraController.rotationY)) {
         playerState.lastWallPlaceTime = now;
+        // Sync wall to network
+        if (network && network.isConnected) {
+          const walls = buildSystem.getWalls();
+          const lastWall = walls[walls.length - 1];
+          network.sendWallPlaced(lastWall.position, lastWall.mesh.rotation.y);
+        }
       }
     }
   }
@@ -830,19 +877,25 @@ function shoot() {
     shots.forEach(shot => {
       const direction = new THREE.Vector3(0, 0, -1);
       direction.applyQuaternion(camera.quaternion);
-      
+
       // Add spread
       direction.x += (Math.random() - 0.5) * shot.spread;
       direction.y += (Math.random() - 0.5) * shot.spread;
       direction.normalize();
 
+      // Send shot to network
+      if (network && network.isConnected) {
+        network.sendShoot(camera.position, direction, weapon.name, shot.color);
+      }
+
       raycaster.set(camera.position, direction);
-      
-      // Check for hits
+
+      // Check for hits - include remote players
       const targets = enemies.map(e => e.mesh);
+      const remotePlayerMeshes = Array.from(remotePlayers.values()).map(r => r.mesh);
       const walls = buildSystem.getWalls().map(w => w.mesh);
       const obstacleMeshes = obstacles.map(o => o.mesh);
-      const intersects = raycaster.intersectObjects([...targets, ...walls, ...obstacleMeshes], true);
+      const intersects = raycaster.intersectObjects([...targets, ...remotePlayerMeshes, ...walls, ...obstacleMeshes], true);
 
       if (intersects.length > 0) {
         const hit = intersects[0];
@@ -871,6 +924,21 @@ function shoot() {
           }
         }
 
+        // Check if hit a remote player (other human)
+        for (const [playerId, remote] of remotePlayers) {
+          if (remote.mesh === hit.object || remote.mesh.children.some(child => child === hit.object || (child.children && child.children.includes(hit.object)))) {
+            // Only damage players from opposite team
+            if (remote.data.team !== playerState.team) {
+              showHitMarker();
+              // Send hit to server
+              if (network && network.isConnected) {
+                network.sendHit(playerId, shot.damage);
+              }
+            }
+            break;
+          }
+        }
+
         // Check if hit a wall
         for (const wall of buildSystem.getWalls()) {
           if (wall.mesh === hit.object) {
@@ -878,7 +946,7 @@ function shoot() {
             break;
           }
         }
-        
+
         // Obstacles block shots but don't take damage (trees/rocks)
       }
 
@@ -974,6 +1042,9 @@ function animate() {
 
   // Update camera
   cameraController.update();
+
+  // Smooth interpolation for remote players
+  interpolateRemotePlayers(deltaTime);
 
   // Update build system preview (always show if near placement area)
   const now = Date.now();

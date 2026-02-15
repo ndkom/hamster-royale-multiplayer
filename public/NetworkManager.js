@@ -6,7 +6,7 @@ export class NetworkManager {
     this.isConnected = false;
     this.remotePlayers = new Map(); // Store other players
     this.lastPositionSent = Date.now();
-    this.positionUpdateInterval = 50; // Send position every 50ms
+    this.positionUpdateInterval = 30; // Send position every 30ms for smoother sync
   }
 
   // Connect to server
@@ -26,9 +26,11 @@ export class NetworkManager {
       script.onload = () => {
         try {
           this.socket = io(serverUrl, {
-            timeout: 2000,
-            reconnection: false, // Don't auto-reconnect if server not available
-            transports: ['websocket', 'polling']
+            timeout: 5000,
+            reconnection: true,
+            reconnectionAttempts: 3,
+            transports: ['websocket'], // WebSocket only for lowest latency
+            upgrade: false
           });
           
           // Set a timeout for connection

@@ -138,6 +138,39 @@ export class BuildSystem {
     return this.walls;
   }
 
+  // Create wall from network event (another player placed it)
+  createWallFromNetwork(position, rotation) {
+    // Check if wall already exists at this position
+    for (const wall of this.walls) {
+      const dist = Math.sqrt(
+        Math.pow(wall.position.x - position.x, 2) +
+        Math.pow(wall.position.z - position.z, 2)
+      );
+      if (dist < 1) return; // Already exists
+    }
+
+    const wall = this.createWall(position);
+    wall.mesh.rotation.y = rotation;
+    console.log('Wall synced from network');
+  }
+
+  // Remove wall at position (from network event)
+  removeWallAt(position) {
+    for (let i = this.walls.length - 1; i >= 0; i--) {
+      const wall = this.walls[i];
+      const dist = Math.sqrt(
+        Math.pow(wall.position.x - position.x, 2) +
+        Math.pow(wall.position.z - position.z, 2)
+      );
+      if (dist < 2) {
+        this.scene.remove(wall.mesh);
+        this.walls.splice(i, 1);
+        console.log('Wall removed from network');
+        return;
+      }
+    }
+  }
+
   destroy() {
     this.scene.remove(this.previewWall);
     this.walls.forEach(wall => this.scene.remove(wall.mesh));
